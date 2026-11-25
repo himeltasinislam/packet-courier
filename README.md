@@ -19,4 +19,4 @@ python client.py                  # terminal 2
 
 ## Agentic AI in development
 Built with Claude as a development partner: it planned the design, generated the simulation engine and the socket
-code, and I reviewed, tested and adjusted the parameters. (Add your own notes here: prompts you used, bugs you hit, what you changed.)
+code, and I reviewed, tested and adjusted the parameters. 
