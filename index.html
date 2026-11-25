@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Packet Courier – the TCP vs UDP game</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#E9EEF2;--card:#F8FAFB;--ink:#12232F;--mute:#5B6E7C;--tcp:#2F5BEA;--udp:#E8920B;--bad:#D6334A;--ok:#1E9E6A;--line:#C5D1DA}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Bricolage Grotesque",system-ui,sans-serif}
+main{max-width:860px;margin:0 auto;padding:28px 18px 60px}
+h1{font-size:clamp(2rem,6vw,3.4rem);line-height:1;margin:0 0 8px;font-weight:800;letter-spacing:-.03em}
+h1 b{color:var(--tcp)} h1 i{color:var(--udp);font-style:normal}
+.sub{color:var(--mute);max-width:60ch;margin:0 0 22px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;margin-bottom:16px}
+.top{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-weight:600}
+.top span{color:var(--mute);font-weight:400}
+#scTitle{font-size:1.5rem;font-weight:800;margin:6px 0 2px}
+#scText{margin:0 0 10px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.chips em{font-style:normal;font-size:.85rem;border:1px solid var(--line);border-radius:99px;padding:2px 10px;color:var(--mute)}
+.pick{display:flex;gap:10px;flex-wrap:wrap}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:11px 18px;cursor:pointer;color:#fff}
+button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
+button:disabled{opacity:.45;cursor:default}
+#bT{background:var(--tcp)} #bU{background:var(--udp)} #bN{background:var(--ink)}
+canvas{width:100%;height:390px;display:block;background:var(--card);border:1px solid var(--line);border-radius:14px}
+#res{min-height:5.5em}
+#res h3{margin:0 0 4px;font-size:1.2rem}
+.pass{color:var(--ok)} .fail{color:var(--bad)}
+details{margin-top:8px} summary{cursor:pointer;font-weight:600}
+td,th{text-align:left;padding:5px 14px 5px 0;vertical-align:top;font-size:.95rem}
+p.note{color:var(--mute);font-size:.9rem}
+@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<main>
+<h1>Packet <b>Courier</b> <i>TCP vs UDP</i></h1>
+<p class="sub">You are the network engineer. Each round gives you a job. Pick the protocol, then watch both protocols try to deliver it across a lossy link.</p>
+
+<div class="card">
+  <div class="top"><div>Round <span id="rd">1 / 5</span></div><div>Score <span id="sc">0</span></div><div>Streak <span id="st">0</span></div></div>
+  <div id="scTitle"></div><p id="scText"></p>
+  <div class="chips" id="chips"></div>
+  <div class="pick"><button id="bT">Ship with TCP</button><button id="bU">Ship with UDP</button><button id="bN" hidden>Next round</button></div>
+</div>
+
+<canvas id="cv" aria-label="Animation of packets travelling over TCP and UDP"></canvas>
+
+<div class="card" id="res" aria-live="polite" style="margin-top:16px"><p class="note">Pick a protocol to start the round. Both lanes run at the same time so you can compare them.</p></div>
+
+<div class="card">
+<details open><summary>What you are seeing</summary>
+<table>
+<tr><th style="color:var(--tcp)">TCP lane</th><td>Handshake first (SYN, SYN-ACK, ACK). Every data packet is acknowledged. Lost packets are resent after a timeout, the sending window shrinks after a loss, and the receiver hands data to the app strictly in order. Nothing is lost, but one lost packet stalls everything behind it.</td></tr>
+<tr><th style="color:var(--udp)">UDP lane</th><td>No handshake, no ACKs, no resends. Packets are fired and forgotten. Fast and low latency, but whatever the network drops is gone.</td></tr>
+<tr><th>Colours</th><td>Green cell: arrived in time. Amber cell: arrived too late to be useful. Red cell: never arrived. Red ✕ in the lane: dropped by the network. Ringed dot: TCP retransmission.</td></tr>
+</table></details>
+<p class="note">Browsers cannot open raw TCP or UDP sockets, so this page runs an in-page simulation of both protocols (loss, delay, jitter, ACKs, retransmission timeouts, slow start). The repository also contains <code>server.py</code> and <code>client.py</code>, which use real TCP and UDP sockets.</p>
+</div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const COL={tcp:'#2F5BEA',udp:'#E8920B',bad:'#D6334A',ok:'#1E9E6A',ink:'#12232F',mute:'#9FB0BC'};
+const SCEN=[
+{t:'Bank transfer',d:'Send 30 payment records. Every record must arrive, in order.',N:30,gap:0,loss:.12,delay:60,jit:0,bud:1e9,need:1,
+ why:'Money cannot go missing. TCP’s resends guarantee delivery and order; UDP would silently drop records.'},
+{t:'Voice call',d:'50 audio frames, one every 20 ms. A frame later than 250 ms is useless, and a few gaps are fine.',N:50,gap:20,loss:.08,delay:50,jit:20,bud:250,need:.85,
+ why:'Old audio is worthless. TCP waits for the resend and every frame behind it arrives late; UDP just skips the gap.'},
+{t:'Photo download',d:'Download a 40-packet photo. A missing packet corrupts the picture.',N:40,gap:0,loss:.06,delay:40,jit:0,bud:1e9,need:1,
+ why:'Files need every byte. TCP repairs the loss for you.'},
+{t:'Multiplayer shooter',d:'60 position updates at 30 per second. Anything older than 120 ms is stale.',N:60,gap:33,loss:.10,delay:40,jit:10,bud:120,need:.8,
+ why:'The newest position matters, not the lost one. TCP’s head-of-line blocking makes everything lag.'},
+{t:'Live video stream',d:'60 video frames at 30 per second. Frames later than 300 ms are skipped by the player.',N:60,gap:33,loss:.06,delay:80,jit:15,bud:300,need:.8,
+ why:'Live video prefers a glitch over a freeze. UDP keeps the stream current.'}
+];
+let r=0,score=0,streak=0,run=null,choice=null,clock=0,last=0,anim=null;
+
+function simTCP(s){
+ const ev=[],{N,gap,loss,delay}=s,rtt=delay*2,RTO=rtt*2+40,rnd=Math.random;
+ let t=0;
+ for(;;){ // handshake
+  let l1=rnd()<loss; ev.push({t0:t,t1:t+delay,k:'SYN',dir:1,lost:l1});
+  if(l1){t+=RTO;continue}
+  let a=t+delay,l2=rnd()<loss; ev.push({t0:a,t1:a+delay,k:'SYN-ACK',dir:-1,lost:l2});
+  if(l2){t+=RTO;continue}
+  let b=a+delay; ev.push({t0:b,t1:b+delay,k:'ACK',dir:1,lost:false}); t=b; break;
+ }
+ let now=t,cwnd=2,ssth=32,next=0,base=0,retx=0,expect=0;
+ const inf={},got=new Set(),dT=Array(N).fill(null);let pend=[];
+ const tx=(q,re)=>{inf[q]=now;const lost=rnd()<loss;ev.push({t0:now,t1:now+delay,k:'D',dir:1,lost,re,seq:q});if(!lost)pend.push({t:now+delay,y:'d',q})};
+ while(base<N&&now<40000){
+  pend.sort((x,y)=>x.t-y.t);
+  while(pend.length&&pend[0].t<=now){
+   const p=pend.shift();
+   if(p.y==='d'){got.add(p.q);while(got.has(expect)){dT[expect]=p.t;expect++}
+    const lost=rnd()<loss;ev.push({t0:p.t,t1:p.t+delay,k:'A',dir:-1,lost});
+    if(!lost)pend.push({t:p.t+delay,y:'a',a:expect});
+   }else if(p.a>base){const n=p.a-base;for(let q=base;q<p.a;q++)delete inf[q];base=p.a;cwnd+=cwnd<ssth?n:n/cwnd}
+  }
+  for(const q in inf){if(now-inf[q]>=RTO){retx++;tx(+q,true);ssth=Math.max(cwnd/2,2);cwnd=1;break}}
+  while(next<N&&next*gap<=now-t&&next-base<Math.floor(cwnd))tx(next++,false);
+  now+=10;
+ }
+ return {ev,arr:dT,retx};
+}
+function simUDP(s){
+ const ev=[],arr=Array(s.N).fill(null);
+ for(let i=0;i<s.N;i++){
+  const t0=i*s.gap,lost=Math.random()<s.loss,t1=t0+s.delay+Math.random()*s.jit;
+  ev.push({t0,t1,k:'D',dir:1,lost,seq:i}); if(!lost)arr[i]=t1;
+ }
+ return {ev,arr,retx:0};
+}
+function stat(k){
+ const s=SCEN[r],L=run[k];let useful=0,got=0,fin=0;
+ L.arr.forEach((a,i)=>{if(a!=null){got++;fin=Math.max(fin,a);if(a<=i*s.gap+s.bud)useful++}});
+ return {useful,got,fin,pass:useful/s.N>=s.need-1e-9,retx:L.retx};
+}
+function cellState(k,i){
+ const s=SCEN[r],a=run[k].arr[i];
+ if(a!=null&&a<=clock*run.rate)return a<=i*s.gap+s.bud?'ok':'late';
+ return run.done&&a==null?'miss':'wait';
+}
+function load(){
+ const s=SCEN[r];
+ $('rd').textContent=(r+1)+' / '+SCEN.length;$('scTitle').textContent=s.t;$('scText').textContent=s.d;
+ $('chips').innerHTML=[`${Math.round(s.loss*100)}% packet loss`,`${s.delay} ms one-way delay`,s.bud<1e8?`deadline ${s.bud} ms`:'no deadline, needs 100%'].map(x=>`<em>${x}</em>`).join('');
+ $('bT').disabled=$('bU').disabled=false;$('bN').hidden=true;run=null;clock=0;
+ $('res').innerHTML='<p class="note">Pick a protocol to start the round. Both lanes run at the same time so you can compare them.</p>';
+ draw();
+}
+function start(k){
+ choice=k;const s=SCEN[r];
+ run={tcp:simTCP(s),udp:simUDP(s),done:false};
+ const total=Math.max(...['tcp','udp'].map(x=>Math.max(...run[x].ev.map(e=>e.t1))));
+ run.total=total;run.rate=Math.max(1,total/7000);clock=0;last=performance.now();
+ $('bT').disabled=$('bU').disabled=true;$('res').innerHTML='<p class="note">Packets in flight…</p>';
+ cancelAnimationFrame(anim);anim=requestAnimationFrame(tick);
+}
+function tick(n){
+ clock+=n-last;last=n;
+ // clock is in real ms; sim time = clock*rate
+ draw();
+ if(clock*run.rate>=run.total+300){run.done=true;draw();finish();return}
+ anim=requestAnimationFrame(tick);
+}
+function finish(){
+ const s=SCEN[r],a=stat(choice),o=stat(choice==='tcp'?'udp':'tcp'),on=choice==='tcp'?'UDP':'TCP',cn=choice.toUpperCase();
+ let pts=0;if(a.pass){streak++;pts=100+10*(streak-1)}else streak=0;score+=pts;
+ const line=(n,x)=>`${n}: ${x.useful}/${s.N} packets useful, ${x.got}/${s.N} delivered${n==='TCP'?`, ${x.retx} retransmissions`:''}, done after ${Math.round(x.fin)} ms`;
+ $('sc').textContent=score;$('st').textContent=streak;
+ $('res').innerHTML=`<h3 class="${a.pass?'pass':'fail'}">${a.pass?'Delivered. +'+pts:'Failed. +0'} (${cn})</h3>
+ <p>${s.why}</p><p class="note">${line(cn,a)}<br>${line(on,o)}${o.pass===a.pass?'':`<br>${on} would have ${o.pass?'passed':'failed'} this one.`}</p>`;
+ const nb=$('bN');nb.hidden=false;nb.textContent=r<SCEN.length-1?'Next round':'See final score';
+}
+function end(){
+ const t=score>=450?'Network architect':score>=300?'Senior engineer':score>=150?'Junior engineer':'Packet loss victim';
+ $('res').innerHTML=`<h3>Final score: ${score}</h3><p>Rank: <b>${t}</b>. TCP when every byte matters, UDP when freshness matters more than completeness.</p>`;
+ $('bN').textContent='Play again';$('bN').dataset.again=1;
+}
+$('bT').onclick=()=>start('tcp');$('bU').onclick=()=>start('udp');
+$('bN').onclick=()=>{
+ if($('bN').dataset.again){r=0;score=0;streak=0;delete $('bN').dataset.again;$('sc').textContent=0;$('st').textContent=0;load();return}
+ if(r<SCEN.length-1){r++;load()}else end();
+};
+
+const cv=$('cv'),ctx=cv.getContext('2d');
+function draw(){
+ const dpr=devicePixelRatio||1,w=cv.clientWidth,h=cv.clientHeight;
+ if(cv.width!==w*dpr){cv.width=w*dpr;cv.height=h*dpr}
+ ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,w,h);
+ lane('tcp',0,w);lane('udp',195,w);
+}
+function lane(k,y0,w){
+ const s=SCEN[r],x0=64,x1=w-64,ly=y0+70;
+ ctx.font='600 15px "Bricolage Grotesque",system-ui,sans-serif';ctx.textBaseline='middle';
+ ctx.fillStyle=COL[k];ctx.fillText(k.toUpperCase()+(run&&choice===k?'  (your pick)':''),14,y0+22);
+ ctx.strokeStyle='#C5D1DA';ctx.lineWidth=2;ctx.setLineDash([6,6]);ctx.beginPath();ctx.moveTo(x0,ly);ctx.lineTo(x1,ly);ctx.stroke();ctx.setLineDash([]);
+ ctx.fillStyle=COL.ink;ctx.fillRect(x0-34,ly-18,34,36);ctx.fillRect(x1,ly-18,34,36);
+ ctx.fillStyle='#fff';ctx.font='11px system-ui';ctx.textAlign='center';ctx.fillText('send',x0-17,ly);ctx.fillText('recv',x1+17,ly);ctx.textAlign='left';
+ const sim=run?clock*run.rate:0;
+ if(run){
+  for(const e of run[k].ev){
+   if(sim<e.t0||sim>e.t1+(e.lost?350:0))continue;
+   const p=Math.min((sim-e.t0)/(e.t1-e.t0),1),f=e.lost?Math.min(p,.55):p;
+   const x=e.dir>0?x0+(x1-x0)*f:x1-(x1-x0)*f,y=ly+(e.k==='A'||e.k==='SYN-ACK'?16:-6);
+   if(e.lost&&p>=.55){ctx.strokeStyle=COL.bad;ctx.lineWidth=2.5;ctx.beginPath();ctx.moveTo(x-6,y-6);ctx.lineTo(x+6,y+6);ctx.moveTo(x+6,y-6);ctx.lineTo(x-6,y+6);ctx.stroke();continue}
+   ctx.fillStyle=e.k==='A'?'#8FA6F5':e.k==='D'?COL[k]:COL.ink;
+   ctx.beginPath();ctx.arc(x,y,e.k==='A'?4:6,0,7);ctx.fill();
+   if(e.re){ctx.strokeStyle=COL.ink;ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y,9,0,7);ctx.stroke()}
+   if(e.k.length>1&&e.k!=='ACK'||e.k==='ACK'&&e.t0<2000&&e.dir>0&&e.seq===undefined){ctx.fillStyle=COL.ink;ctx.font='11px system-ui';ctx.textAlign='center';ctx.fillText(e.k,x,y-16);ctx.textAlign='left'}
+  }
+ }
+ // delivery grid
+ const N=s.N,gx=14,gw=w-28,cw=gw/N,gy=y0+118;
+ ctx.fillStyle='#5B6E7C';ctx.font='12px system-ui';ctx.fillText('what the receiving app got',gx,gy-10);
+ for(let i=0;i<N;i++){
+  const st=run?cellState(k,i):'wait';
+  ctx.fillStyle=st==='ok'?COL.ok:st==='late'?COL.udp:st==='miss'?COL.bad:'#D9E2E8';
+  ctx.fillRect(gx+i*cw+1,gy,Math.max(cw-2,2),26);
+ }
+}
+addEventListener('resize',draw);
+load();
+</script>
+</body>
+</html>
