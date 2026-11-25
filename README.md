@@ -4,7 +4,7 @@ An interactive game that teaches when to use TCP and when to use UDP. Each round
 (bank transfer, voice call, shooter, video stream...). You choose a protocol, then both protocols race
 across a lossy network so you can see why one fits and the other does not.
 
-**Live demo:** https://YOUR-USERNAME.github.io/packet-courier/
+**Live demo:** https://himeltasinislam.github.io/packet-courier/
 
 ## How TCP and UDP are demonstrated
 - `index.html` simulates both protocols step by step: TCP handshake, ACKs, retransmission timeouts, slow start,
